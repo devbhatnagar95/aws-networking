@@ -1,0 +1,237 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "AWS Architecture with multiple VPCs, Subnets, NAT, and VPN connections"
+
+Resources:
+
+  # Web VPC
+  WebVPC:
+    Type: "AWS::EC2::VPC"
+    Properties:
+      CidrBlock: "10.1.0.0/16"
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: "web-vpc"
+
+  WebPubSubnet:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref WebVPC
+      CidrBlock: "10.1.254.0/24"
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: "web-pub"
+
+  WebIGW:
+    Type: "AWS::EC2::InternetGateway"
+    Properties:
+      Tags:
+        - Key: Name
+          Value: "web-igw"
+
+  AttachWebIGW:
+    Type: "AWS::EC2::VPCGatewayAttachment"
+    Properties:
+      VpcId: !Ref WebVPC
+      InternetGatewayId: !Ref WebIGW
+
+  WebRouteTable:
+    Type: "AWS::EC2::RouteTable"
+    Properties:
+      VpcId: !Ref WebVPC
+      Tags:
+        - Key: Name
+          Value: "web-route-table"
+
+  WebRoute:
+    Type: "AWS::EC2::Route"
+    DependsOn: AttachWebIGW
+    Properties:
+      RouteTableId: !Ref WebRouteTable
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId: !Ref WebIGW
+
+  WebSubnetRouteTableAssociation:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties:
+      SubnetId: !Ref WebPubSubnet
+      RouteTableId: !Ref WebRouteTable
+
+  WebInstance:
+    Type: "AWS::EC2::Instance"
+    Properties:
+      InstanceType: "t2.micro"
+      ImageId: "ami-0c55b159cbfafe1f0" # Amazon Linux 2 AMI
+      SubnetId: !Ref WebPubSubnet
+      Tags:
+        - Key: Name
+          Value: "www1"
+
+  # Shared VPC
+  SharedVPC:
+    Type: "AWS::EC2::VPC"
+    Properties:
+      CidrBlock: "10.2.0.0/16"
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: "shared-vpc"
+
+  NatPubSubnet:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref SharedVPC
+      CidrBlock: "10.2.254.0/24"
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: "nat-pub"
+
+  DatabaseSubnet:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref SharedVPC
+      CidrBlock: "10.2.2.0/24"
+      Tags:
+        - Key: Name
+          Value: "database"
+
+  NatGatewayEIP:
+    Type: "AWS::EC2::EIP"
+    Properties:
+      Domain: "vpc"
+
+  NatGateway:
+    Type: "AWS::EC2::NatGateway"
+    Properties:
+      AllocationId: !GetAtt NatGatewayEIP.AllocationId
+      SubnetId: !Ref NatPubSubnet
+      Tags:
+        - Key: Name
+          Value: "nat1"
+
+  PrivateRouteTable:
+    Type: "AWS::EC2::RouteTable"
+    Properties:
+      VpcId: !Ref SharedVPC
+      Tags:
+        - Key: Name
+          Value: "private-route-table"
+
+  PrivateRoute:
+    Type: "AWS::EC2::Route"
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: "0.0.0.0/0"
+      NatGatewayId: !Ref NatGateway
+
+  PrivateSubnetRouteTableAssociation:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties:
+      SubnetId: !Ref DatabaseSubnet
+      RouteTableId: !Ref PrivateRouteTable
+
+  DatabaseInstance:
+    Type: "AWS::EC2::Instance"
+    Properties:
+      InstanceType: "t2.micro"
+      ImageId: "ami-0c55b159cbfafe1f0" # Amazon Linux 2 AMI
+      SubnetId: !Ref DatabaseSubnet
+      Tags:
+        - Key: Name
+          Value: "db1"
+
+  # Transit VPC
+  TransitVPC:
+    Type: "AWS::EC2::VPC"
+    Properties:
+      CidrBlock: "10.3.0.0/16"
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: "transit-vpc"
+
+  TransitSubnet:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref TransitVPC
+      CidrBlock: "10.3.0.0/24"
+      Tags:
+        - Key: Name
+          Value: "transit"
+
+  TransitInstance:
+    Type: "AWS::EC2::Instance"
+    Properties:
+      InstanceType: "t2.micro"
+      ImageId: "ami-0c55b159cbfafe1f0" # Amazon Linux 2 AMI
+      SubnetId: !Ref TransitSubnet
+      Tags:
+        - Key: Name
+          Value: "transit-csr"
+
+  # VPC Peering Connections
+  PeeringConnectionWebShared:
+    Type: "AWS::EC2::VPCPeeringConnection"
+    Properties:
+      VpcId: !Ref WebVPC
+      PeerVpcId: !Ref SharedVPC
+      Tags:
+        - Key: Name
+          Value: "pcx-web-shared"
+
+  PeeringConnectionWebTransit:
+    Type: "AWS::EC2::VPCPeeringConnection"
+    Properties:
+      VpcId: !Ref WebVPC
+      PeerVpcId: !Ref TransitVPC
+      Tags:
+        - Key: Name
+          Value: "pcx-web-transit"
+
+  # On-Premises Networks (Simulated using EC2 instances for demonstration)
+  CharlestonR1:
+    Type: "AWS::EC2::Instance"
+    Properties:
+      InstanceType: "t2.micro"
+      ImageId: "ami-0c55b159cbfafe1f0" # Amazon Linux 2 AMI
+      SubnetId: !Ref TransitSubnet
+      Tags:
+        - Key: Name
+          Value: "CHS-R1"
+
+  CharlestonServer1:
+    Type: "AWS::EC2::Instance"
+    Properties:
+      InstanceType: "t2.micro"
+      ImageId: "ami-0c55b159cbfafe1f0" # Amazon Linux 2 AMI
+      SubnetId: !Ref TransitSubnet
+      Tags:
+        - Key: Name
+          Value: "CHS-Server1"
+
+  AtlantaR1:
+    Type: "AWS::EC2::Instance"
+    Properties:
+      InstanceType: "t2.micro"
+      ImageId: "ami-0c55b159cbfafe1f0" # Amazon Linux 2 AMI
+      SubnetId: !Ref TransitSubnet
+      Tags:
+        - Key: Name
+          Value: "ATL-R1"
+
+  # Outputs
+  Outputs:
+    WebVPCId:
+      Description: "Web VPC ID"
+      Value: !Ref WebVPC
+    SharedVPCId:
+      Description: "Shared VPC ID"
+      Value: !Ref SharedVPC
+    TransitVPCId:
+      Description: "Transit VPC ID"
+      Value: !Ref TransitVPC
